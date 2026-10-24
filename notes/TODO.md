@@ -10,7 +10,6 @@ Finished items are in [DONE.md](DONE.md), and background explanations in [QnA.md
 
 ## 2. Config and `pom.xml` hygiene
 
-- [ ] *(optional)* **Silence Camel's `SECURITY WARNING: [secret] Secret property is configured with plain-text value`** by using Camel placeholders for the JMS credentials. → [QnA: Camel secret warning](QnA.md#what-is-camels-security-warning-secret-secret-property-is-configured-with-plain-text-value)
 - [ ] **`native.image.path` was split over two lines** by an IDE reformat in `b9e4bdc`. The value now ends in a newline plus indentation. It only matters for native `@QuarkusIntegrationTest` runs (`-Dnative`), but rejoin it into one line. If your IDE keeps doing this, turn off "wrap text in XML tags" for `pom.xml`.
 - [ ] **Misplaced comment:** `<!-- keep in step with citrus-quarkus -->` sits on `com.ibm.mq.jakarta.client`, whose version is unrelated to Citrus. Move it to `citrus-jms`, or drop it once `citrus-bom` is imported.
 - [ ] **Import `citrus-bom`** so all `citrus-*` modules share one version (verified on Maven Central: 5.1.0 exists and manages `citrus-quarkus`, `citrus-jms`, `citrus-junit-jupiter`, …). Add to `<dependencyManagement>`, then drop the `<version>` from each `citrus-*` dependency:

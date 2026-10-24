@@ -8,6 +8,7 @@ Finished TODO items, newest first, kept for reference. Open work is in [TODO.md]
 - `broker/mqsc/30-quarqueueus.mqsc` is mounted into `/etc/mqm/` and re-applied on every start. It defines `DEV.JOBS.REQUEST` (`BOTHRESH(3)` → `DEV.JOBS.BACKOUT`, `DEFPSIST(YES)`) and `DEV.JOBS.BACKOUT`. Verified: the script runs with 0 errors, and `app` can put and get. How-to: [broker/README.md → Creating queues](../broker/README.md#creating-queues).
 
 **Transactions and secrets**
+- Camel JMS credentials via Camel placeholders: `"{{mq_app_user:app}}"` (printed) and `"{{mq.app.password}}"` (masked). This fixes both the Camel security warning and the brief password leak in the startup log. `.env.example` lists `MQ_APP_USER` and `MQ_APP_PASSWORD`. → [QnA](QnA.md#what-is-camels-security-warning-secret-secret-property-is-configured-with-plain-text-value)
 - `citrus-quarkus` back, now in `<scope>test</scope>`.
 - Removed the no-op XA config (`quarkus.transaction-manager.enable-recovery`, `quarkus.pooled-jms.transaction: xa`). The startup warning is gone. → [QnA](QnA.md#why-does-quarkuspooled-jmstransaction-xa-do-nothing)
 - `camel.component.jms.transacted: true`: local, Spring-style JMS transactions. → [QnA](QnA.md#follow-up-do-i-still-get-normal-spring-style-jms-transactions)

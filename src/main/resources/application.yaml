@@ -8,8 +8,8 @@ quarkus:
 camel:
   component:
     jms:
-      username: app
-      password: ${MQ_APP_PASSWORD}
+      username: "{{mq_app_user:app}}"   # Camel's default syntax is key:default
+      password: "{{mq.app.password}}"
       transacted: true
   debug:
     jmxConnectorEnabled: false

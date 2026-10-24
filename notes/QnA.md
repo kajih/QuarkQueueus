@@ -6,9 +6,9 @@ Answers to questions about this repo and Quarkus, newest at the bottom. These ar
 
 | Status | Entry |
 |---|---|
-| 🔴 open | [What is Camel's `SECURITY WARNING: … plain-text value`?](#what-is-camels-security-warning-secret-secret-property-is-configured-with-plain-text-value) (optional fix) |
 | 🔴 open | [Why is the `GET /jobs` endpoint wrong?](#why-is-the-get-jobs-endpoint-wrong-and-how-do-i-fix-it) |
 | 🔴 open | [How do I return 201 / 404 / 409 from a generated interface?](#how-do-i-return-201--404--409-when-the-generated-interface-returns-a-plain-dto) |
+| ✅ applied | [What is Camel's `SECURITY WARNING: … plain-text value`?](#what-is-camels-security-warning-secret-secret-property-is-configured-with-plain-text-value) (+ Camel's masking rule) |
 | ✅ applied | [Why does `quarkus.pooled-jms.transaction: xa` do nothing?](#why-does-quarkuspooled-jmstransaction-xa-do-nothing) (+ local vs JTA/XA transactions in Camel) |
 | ✅ applied | [How do I keep local secrets out of git (`.env` vs Vault)?](#how-do-i-keep-local-secrets-passwords-credentials-out-of-git-do-i-need-a-env-plugin-or-vault) |
 | ✅ applied | [How do I provide the IBM MQ `ConnectionFactory` for Camel JMS?](#how-do-i-provide-the-ibm-mq-connectionfactory-for-camel-jms-with-pooling-and-credentials) |
@@ -328,19 +328,50 @@ Logged at startup for `camel.component.jms.username` and `camel.component.jms.pa
 
 **Why it appears:** Camel marks some component options as secrets (`username`/`password` on JMS among them). At startup, Camel Main checks whether each secret was configured as a *placeholder* or as a literal value. Our `application.yaml` uses `password: ${MQ_APP_PASSWORD}`, which is a **Quarkus/SmallRye** placeholder. Quarkus resolves it *before* Camel ever reads the property, so Camel only sees the resolved value and concludes it's plain text. `username: app` really is a literal. Nothing is leaked; the warning is about how the config *looks* to Camel.
 
-**Fix: use Camel's placeholder syntax `{{...}}` instead.** Quarkus leaves `{{...}}` alone, so Camel sees the placeholder (no warning) and resolves it itself. Camel Quarkus's property resolver reads Quarkus config, so `.env` still works:
+**Fix: use Camel's placeholder syntax `{{...}}` with a lower-case, dotted key ending in `password`.** Quarkus leaves `{{...}}` alone, so Camel sees the placeholder (no warning) and resolves it itself. Camel Quarkus's property resolver reads Quarkus config, and SmallRye maps `mq.app.password` to the env-style name `MQ_APP_PASSWORD`, so the existing `.env` entry still works unchanged:
 
 ```yaml
 camel:
   component:
     jms:
-      username: "{{MQ_APP_USER:app}}"     # Camel default syntax is key:default
-      password: "{{MQ_APP_PASSWORD}}"
+      username: "{{mq.app.user:app}}"     # Camel default syntax is key:default
+      password: "{{mq.app.password}}"     # resolved from MQ_APP_PASSWORD in .env
 ```
 
 Quote the values, because `{` starts a flow mapping in YAML.
 
-**Verified on a scratch copy on 2026-10-24.** A `@QuarkusTest` read `JmsComponent.getConfiguration()`: the username resolved to `app`, the password matched the `.env` value, and the warning was gone.
+⚠ **Don't use `{{MQ_APP_PASSWORD}}` (the env-style name) as the key.** I first suggested that, and it **leaks the password into the startup log**. Camel Main logs a "Property-placeholders summary" at INFO with every placeholder it resolved, and it masks only keys it recognises as sensitive. `MQ_APP_PASSWORD` isn't recognised; `mq.app.password` is. Tested on 2026-10-24:
+
+| Config | Security warning | Startup log |
+|---|---|---|
+| `${MQ_APP_PASSWORD}` (Quarkus placeholder) | yes | `camel.component.jms.password = xxxxxx` |
+| `"{{MQ_APP_PASSWORD}}"` | no | **`MQ_APP_PASSWORD = passw0rd`**: leaked |
+| `"{{mq.app.password}}"` | no | `mq.app.password = xxxxxx` |
+
+A `@QuarkusTest` reading `JmsComponent.getConfiguration()` confirmed that the last variant resolves the username to `app` and the password to the `.env` value.
+
+**The exact masking rule**, from `org.apache.camel.util.SensitiveUtils.containsSensitive` (camel-util 4.22.1): take the part of the key **after the last `.`**, lowercase it, remove `-`, and check for an **exact match** against a list of 94 keywords: `password`, `secret`, `token`, `user`, `username`, `passphrase`, `accesskey`, …. So case doesn't matter, but the final dotted segment does:
+
+| Key | Last segment, normalised | Masked? |
+|---|---|---|
+| `mq.app.password` | `password` | ✅ |
+| `MQ.APP.PASSWORD` | `password` | ✅ |
+| `MQ_APP_PASSWORD` | `mq_app_password` (no `.`, `_` not stripped) | ❌ |
+| `mq.app-password` | `apppassword` | ❌ |
+| `mq.app.passwd` | `passwd` (not in the list) | ❌ |
+
+Rule of thumb: **name secrets `<something>.password` / `.secret` / `.token`**. It's also the idiomatic Quarkus property style, and SmallRye still finds `MQ_APP_PASSWORD` in `.env` or in the real environment. `user`/`username` are on the list too, which is why the plain `username: app` triggered the security warning.
+
+**Final config chosen (2026-10-24):** the username should be *visible* and the password masked:
+
+```yaml
+      username: "{{mq_app_user:app}}"   # no dot → "mq_app_user" not sensitive → printed
+      password: "{{mq.app.password}}"   # last segment "password" → masked
+```
+
+Tested: without `MQ_APP_USER` in `.env`, the default `app` is used, and the summary lists only `mq.app.password = xxxxxx` (defaults aren't listed). With `MQ_APP_USER=probeuser`, the user resolves to `probeuser` and the summary shows `mq_app_user = probeuser`. SmallRye finds the `.env` entry because its env lookup upper-cases the name after replacing non-alphanumerics with `_`.
+
+Belt and braces: `camel.main.auto-configuration-log-summary: false` turns both summaries off entirely (also tested). That's a reasonable default for any environment where logs are shipped somewhere, because the summary is only useful while debugging config.
 
 **Don't** use `{{env:MQ_APP_PASSWORD}}`, the form the warning text suggests. Camel's `env:` function reads real OS environment variables only, and `.env` entries aren't OS env vars. They're a Quarkus config source.
 
