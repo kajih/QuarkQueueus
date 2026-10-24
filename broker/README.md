@@ -98,7 +98,9 @@ SET AUTHREC PROFILE('JOBS.**') OBJTYPE(QUEUE) PRINCIPAL('app') AUTHADD(BROWSE,GE
 
 ### Backout: why your own queues should set `BOTHRESH`
 
-The built-in `DEV.QUEUE.1..3` have `BOTHRESH(0)` and no `BOQNAME`, which means **never back out**. With Camel `transacted: true`, a message that makes the route fail every time is rolled back and redelivered forever. With `BOTHRESH(n)` and `BOQNAME(q)` set, the IBM MQ JMS client moves the message to `q` after `n` failed deliveries. If it can't (no `BOQNAME`, or no PUT authority), the message goes to the dead-letter queue `DEV.DEAD.LETTER.QUEUE`. It's the counterpart of a Spring/ActiveMQ redelivery policy with a DLQ, except here it's configured on the queue, not in the client.
+The built-in `DEV.QUEUE.1..3` have `BOTHRESH(0)` and no `BOQNAME`, which means **never back out**. With Camel `transacted: true`, a message that makes the route fail every time is rolled back and redelivered forever. With `BOTHRESH(n)` and `BOQNAME(q)` set, the IBM MQ JMS client moves the message to `q` after `n` failed deliveries. If it can't (no `BOQNAME`, or missing authority), it tries the dead-letter queue `DEV.DEAD.LETTER.QUEUE`. It's the counterpart of a Spring/ActiveMQ redelivery policy with a DLQ, except here it's configured on the queue, not in the client.
+
+**The backout queue needs `PASSALL`, not just `PUT`.** The client requeues the message with its original context, so `app` needs `PASSALL` on the backout queue and on the dead-letter queue. The image's `DEV.**` profile doesn't include it, and the most specific matching profile wins, so `mqsc/30-quarqueueus.mqsc` sets specific records with `BROWSE,GET,INQ,PUT,PASSALL` on both. Tested 2026-10-24: without them, the third failed delivery gives `AMQ8077W … insufficient authority … passall` in the queue manager log. The listener logs `JMSWMQ1080: No Backout-Requeue queue defined` / `JMSWMQ1079: Unable to write a message to dead letter queue` and fails every 5 s, and the message stays on the request queue. With them, the message moves to `DEV.JOBS.BACKOUT` and the listener carries on. **A new backout queue needs the same `SET AUTHREC`.**
 
 ## Passwords
 

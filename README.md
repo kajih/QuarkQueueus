@@ -19,7 +19,7 @@ A Quarkus learning project: the API-first "Job Execution API" (OpenAPI-generated
    cp .env.example .env   # then set MQ_APP_PASSWORD (passw0rd for the local broker)
    ```
 
-   Without it, startup fails on the unresolved `${MQ_APP_PASSWORD}`.
+   Without it, startup fails: the Camel placeholder `{{mq.app.password}}` resolves from `MQ_APP_PASSWORD` and has no default.
 
 ## Running the application in dev mode
 

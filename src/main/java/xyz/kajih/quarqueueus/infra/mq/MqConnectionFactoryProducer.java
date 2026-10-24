@@ -1,4 +1,4 @@
-package xyz.kajih.mq;
+package xyz.kajih.quarqueueus.infra.mq;
 
 import com.ibm.mq.jakarta.jms.MQConnectionFactory;
 import com.ibm.msg.client.jakarta.wmq.WMQConstants;

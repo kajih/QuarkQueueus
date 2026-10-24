@@ -1,4 +1,4 @@
-package xyz.kajih.mq;
+package xyz.kajih.quarqueueus.infra.mq;
 
 import io.smallrye.config.ConfigMapping;
 

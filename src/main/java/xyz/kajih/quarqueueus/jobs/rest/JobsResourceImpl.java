@@ -1,4 +1,4 @@
-package xyz.kajih;
+package xyz.kajih.quarqueueus.jobs.rest;
 
 import xyz.kajih.jexapi.model.CreateJobRequest;
 import xyz.kajih.jexapi.model.Job;
@@ -10,7 +10,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
-public class JexSrv implements JobsResource {
+public class JobsResourceImpl implements JobsResource {
     @Override
     public Job createJob(CreateJobRequest createJobRequest) {
         return null;

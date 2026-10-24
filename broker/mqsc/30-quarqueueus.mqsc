@@ -13,3 +13,13 @@ DEFINE QLOCAL('DEV.JOBS.REQUEST') +
 DEFINE QLOCAL('DEV.JOBS.BACKOUT') +
        DEFPSIST(YES) +
        REPLACE
+
+* The JMS client requeues poison messages with their original context, which needs PASSALL
+* on the target. The image's DEV.** profile only grants BROWSE,GET,INQ,PUT, and the most
+* specific matching profile wins, so these records repeat those and add PASSALL.
+* Without them the requeue fails (AMQ8077W ... passall, JMSWMQ1079/1080) and the listener loops.
+* DEV.DEAD.LETTER.QUEUE is the client's fallback when the backout queue can't be used.
+SET AUTHREC PROFILE('DEV.JOBS.BACKOUT') OBJTYPE(QUEUE) PRINCIPAL('app') +
+    AUTHADD(BROWSE,GET,INQ,PUT,PASSALL)
+SET AUTHREC PROFILE('DEV.DEAD.LETTER.QUEUE') OBJTYPE(QUEUE) PRINCIPAL('app') +
+    AUTHADD(BROWSE,GET,INQ,PUT,PASSALL)

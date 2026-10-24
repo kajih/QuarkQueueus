@@ -33,6 +33,8 @@ build/
 hs_err_pid*
 replay_pid*
 *.log
+# IBM MQ JMS client log + lock, written to the working directory
+mqjms.log*
 
 # IntelliJ IDEA
 .idea/
