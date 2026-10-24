@@ -1,0 +1,244 @@
+openapi: 3.1.0
+
+info:
+  title: Job Execution API
+  version: 1.0.0
+  description: API for submitting and monitoring asynchronous jobs.
+
+servers:
+  - url: http://localhost:8080
+
+paths:
+
+  /jobs:
+    post:
+      tags:
+        - Jobs
+      operationId: createJob
+      summary: Submit a new job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateJobRequest"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      tags:
+        - Jobs
+      operationId: listJobs
+      summary: List jobs
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/JobStatus"
+      responses:
+        "200":
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Job"
+
+  /jobs/{jobId}:
+    get:
+      tags:
+        - Jobs
+      operationId: getJob
+      summary: Get a job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /jobs/{jobId}/result:
+    get:
+      tags:
+        - Jobs
+      operationId: getJobResult
+      summary: Get the result of a completed job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResult"
+
+        "409":
+          description: Job has not completed yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+        example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+
+  schemas:
+
+    CreateJobRequest:
+      type: object
+      required:
+        - type
+        - parameters
+      properties:
+        type:
+          type: string
+          enum:
+            - image-analysis
+            - data-import
+            - report-generation
+          example: "data-import"
+        parameters:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            source: "s3://example-bucket/input.csv"
+
+    Job:
+      type: object
+      required:
+        - id
+        - type
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+
+        type:
+          type: string
+          example: "data-import"
+
+        status:
+          $ref: "#/components/schemas/JobStatus"
+
+        createdAt:
+          type: string
+          format: date-time
+          example: "2024-01-15T09:30:00Z"
+
+        startedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+          example: "2024-01-15T09:30:05Z"
+
+        finishedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+          example: "2024-01-15T09:32:10Z"
+
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 100
+
+    JobStatus:
+      type: string
+      enum:
+        - QUEUED
+        - RUNNING
+        - COMPLETED
+        - FAILED
+      example: "COMPLETED"
+
+    JobResult:
+      type: object
+      required:
+        - jobId
+        - output
+      properties:
+        jobId:
+          type: string
+          format: uuid
+          example: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+
+        output:
+          type: object
+          additionalProperties: true
+          example:
+            rowsProcessed: 128
+            summary: "ok"
+
+        warnings:
+          type: array
+          items:
+            type: string
+          example:
+            - "3 rows were skipped due to invalid format"
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          example: "VALIDATION_ERROR"
+
+        message:
+          type: string
+          example: "The request could not be validated."
+
+        details:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            field: "type"

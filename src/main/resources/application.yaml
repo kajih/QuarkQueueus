@@ -1,0 +1,6 @@
+quarkus:
+  openapi:
+    generator:
+      server:
+        use: openapitools
+        base-package: xyz.kajih.jexapi

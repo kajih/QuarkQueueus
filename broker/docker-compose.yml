@@ -1,0 +1,35 @@
+# Local IBM MQ (Advanced for Developers) broker for experimenting with Camel JMS / Citrus.
+# Dev-only: default DEV.* objects, self-signed TLS on the console, throwaway passwords.
+name: quarqueueus-broker
+
+services:
+  ibm-mq:
+    image: icr.io/ibm-messaging/mq:10.0.1.0-r1
+    container_name: quarqueueus-ibm-mq
+    environment:
+      LICENSE: accept
+      MQ_QMGR_NAME: QM1
+    secrets:
+      - mqAdminPassword
+      - mqAppPassword
+    ports:
+      - "1414:1414"   # client connections (DEV.APP.SVRCONN / DEV.ADMIN.SVRCONN)
+      - "9443:9443"   # web console: https://localhost:9443/ibmmq/console
+    volumes:
+      - mq-data:/mnt/mqm
+    healthcheck:
+      test: ["CMD", "chkmqhealthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+secrets:
+  mqAdminPassword:
+    file: ./secrets/mqAdminPassword
+  mqAppPassword:
+    file: ./secrets/mqAppPassword
+
+volumes:
+  mq-data:

@@ -1,0 +1,12 @@
+# Normalise line endings in the repo, regardless of core.autocrlf
+* text=auto eol=lf
+
+# Shell scripts must stay LF or they break on Linux/WSL/containers
+mvnw text eol=lf
+*.sh text eol=lf
+
+# Windows scripts need CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.jar binary
