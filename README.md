@@ -1,8 +1,25 @@
 # QuarQueueus
 
-This project uses Quarkus, the Supersonic Subatomic Java Framework.
+A Quarkus learning project: the API-first "Job Execution API" (OpenAPI-generated JAX-RS, Pact provider verification), with job processing over IBM MQ through Camel JMS.
 
-If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
+- Architecture and commands: [CLAUDE.md](CLAUDE.md)
+- Open work: [notes/TODO.md](notes/TODO.md). Questions and answers: [notes/QnA.md](notes/QnA.md)
+
+## Local setup
+
+1. **Start the IBM MQ broker.** There's no Quarkus Dev Service for MQ. See [broker/README.md](broker/README.md):
+
+   ```shell
+   cd broker && docker compose up -d
+   ```
+
+2. **Create `.env`** in the project root from the template. Quarkus reads it natively, and it's gitignored:
+
+   ```shell
+   cp .env.example .env   # then set MQ_APP_PASSWORD (passw0rd for the local broker)
+   ```
+
+   Without it, startup fails on the unresolved `${MQ_APP_PASSWORD}`.
 
 ## Running the application in dev mode
 
@@ -37,6 +54,8 @@ The application, packaged as an _über-jar_, is now runnable using `java -jar ta
 
 ## Creating a native executable
 
+> **Note:** the IBM MQ client isn't prepared for native image, so expect native builds to fail until that's dealt with. JVM mode is the supported path for now.
+
 You can create a native executable using:
 
 ```shell script
@@ -52,11 +71,3 @@ Or, if you don't have GraalVM installed, you can run the native executable build
 You can then execute your native executable with: `./target/quarqueueus-1.0.0-SNAPSHOT-runner`
 
 If you want to learn more about building native executables, please consult <https://quarkus.io/guides/maven-tooling>.
-
-## Provided Code
-
-### REST
-
-Easily start your REST Web Services
-
-[Related guide section...](https://quarkus.io/guides/getting-started-reactive#reactive-jax-rs-resources)

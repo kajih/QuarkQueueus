@@ -17,6 +17,7 @@ services:
       - "9443:9443"   # web console: https://localhost:9443/ibmmq/console
     volumes:
       - mq-data:/mnt/mqm
+      - ./mqsc/30-quarqueueus.mqsc:/etc/mqm/30-quarqueueus.mqsc:ro   # project queues, applied on every start
     healthcheck:
       test: ["CMD", "chkmqhealthy"]
       interval: 10s

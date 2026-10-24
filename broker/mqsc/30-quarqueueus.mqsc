@@ -1,0 +1,15 @@
+* Project queues for quarqueueus. Mounted into /etc/mqm/ and re-applied on every start.
+* DEFINE ... REPLACE resets every attribute not listed here to its default,
+* so this file is the single source of truth: don't change these queues in the console.
+
+* Job requests from the REST API to the worker route.
+* After 3 failed (rolled-back) deliveries the JMS client moves the message to the backout queue.
+DEFINE QLOCAL('DEV.JOBS.REQUEST') +
+       DEFPSIST(YES) +
+       BOTHRESH(3) BOQNAME('DEV.JOBS.BACKOUT') +
+       REPLACE
+
+* Poison messages from DEV.JOBS.REQUEST. Inspect, fix, and move back by hand.
+DEFINE QLOCAL('DEV.JOBS.BACKOUT') +
+       DEFPSIST(YES) +
+       REPLACE
