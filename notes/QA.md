@@ -110,3 +110,149 @@ Alternatives I'd avoid:
 
 - **Dropping the Camel BOM** and giving `camel-quarkus-jms` an explicit version: this goes against how Quarkus platform members are meant to be aligned.
 - **Adding `swagger-models` as a normal dependency:** this works, but it puts a codegen-only library on your runtime classpath.
+
+---
+
+## How do I provide the IBM MQ `ConnectionFactory` for Camel JMS (with pooling and credentials)?
+
+### Spring → Quarkus mapping
+
+| Spring Boot | Quarkus |
+|---|---|
+| `@Configuration` + `@Bean ConnectionFactory` | a class with a `@Produces` method (CDI producer). Same idea, but *you* pick the scope (`@ApplicationScoped` ≈ singleton) |
+| `@ConfigurationProperties(prefix = "mq")` | `@ConfigMapping(prefix = "mq")` on an **interface** (method names map to kebab-case keys) |
+| `mq-jms-spring-boot-starter` auto-config | **nothing**: there's no IBM MQ extension, so you write the producer yourself |
+| `JmsPoolConnectionFactory` / `CachingConnectionFactory` bean | `quarkus-pooled-jms`, but see below: it doesn't wrap your own bean automatically |
+| beans never removed | **ArC removes unused beans at build time.** A bean that only Camel looks up at runtime can be removed, so mark it `@Unremovable` |
+
+### 1. Config mapping
+
+```java
+package xyz.kajih.mq;
+
+import io.smallrye.config.ConfigMapping;
+
+@ConfigMapping(prefix = "mq")
+public interface MqConfig {
+    String host();
+    int port();
+    String queueManager();   // mq.queue-manager
+    String channel();
+}
+```
+
+### 2. Producer
+
+Class names checked against `com.ibm.mq.jakarta.client` 10.0.1.0 and `quarkus-pooled-jms` 2.13.0 in your local repo:
+
+```java
+package xyz.kajih.mq;
+
+import com.ibm.mq.jakarta.jms.MQConnectionFactory;
+import com.ibm.msg.client.jakarta.wmq.WMQConstants;
+import io.quarkiverse.messaginghub.pooled.jms.PooledJmsWrapper;
+import io.quarkus.arc.Unremovable;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Produces;
+import jakarta.jms.ConnectionFactory;
+import jakarta.jms.JMSException;
+
+@ApplicationScoped
+public class MqConnectionFactoryProducer {
+
+    @Produces
+    @ApplicationScoped
+    @Unremovable
+    ConnectionFactory mqConnectionFactory(MqConfig mq, PooledJmsWrapper pool) throws JMSException {
+        var cf = new MQConnectionFactory();
+        cf.setHostName(mq.host());
+        cf.setPort(mq.port());
+        cf.setQueueManager(mq.queueManager());
+        cf.setChannel(mq.channel());
+        cf.setTransportType(WMQConstants.WMQ_CM_CLIENT);   // TCP client, not local bindings
+        return pool.wrapConnectionFactory(cf);
+    }
+}
+```
+
+**Why wrap by hand:** `quarkus-pooled-jms` only wraps automatically the factories created by Quarkus JMS *extensions* (Artemis, Qpid), via a build-time SPI (`ConnectionFactoryWrapperBuildItem`). A `ConnectionFactory` you produce yourself is invisible to that SPI. The extension does expose `PooledJmsWrapper` as an injectable synthetic bean, and `wrapConnectionFactory(cf)` returns a pool that picks up the `quarkus.pooled-jms.*` settings, such as `max-connections`. Without the wrap, adding the dependency does nothing, and Camel opens a new MQ connection for every operation. Spring's `JmsTemplate` has the same problem without a caching factory.
+
+**Camel finds it by type.** Camel Quarkus autowires a single `ConnectionFactory` bean from CDI into the `jms` component, so no `@Named` is needed. If you ever have two, give them `@Identifier("...")` and set `camel.component.jms.connection-factory: "#name"`.
+
+### 3. Config
+
+```yaml
+mq:
+  host: localhost
+  port: 1414
+  queue-manager: QM1
+  channel: DEV.APP.SVRCONN
+
+camel:
+  component:
+    jms:
+      username: app
+      password: ${MQ_APP_PASSWORD:passw0rd}
+
+quarkus:
+  pooled-jms:
+    max-connections: 1   # MQ connections are heavy; one connection, many sessions
+```
+
+A route then just uses `from("jms:queue:DEV.QUEUE.1")` / `.to("jms:queue:DEV.QUEUE.2")`.
+
+### 4. Credentials: Camel component vs `ConnectionFactory`
+
+You found that the user and password only worked when set on the Camel JMS component, not on the factory. I didn't know that as a rule, and the documentation says both should work:
+
+- **Camel component** `username`/`password`: Camel wraps the factory in Spring's `UserCredentialsConnectionFactoryAdapter`, which calls `createConnection(user, password)`. Explicit credentials passed on the call always win.
+- **On the `MQConnectionFactory`**: `cf.setStringProperty(WMQConstants.USERID, ...)`, `cf.setStringProperty(WMQConstants.PASSWORD, ...)` and `cf.setBooleanProperty(WMQConstants.USER_AUTHENTICATION_MQCSP, true)`. These are used when the client calls `createConnection()` *without* arguments.
+
+So if setting them on the factory failed, something specific to your setup is the likely cause, not MQ or Camel in general. Candidates worth checking:
+
+- Camel used a different factory from the one you configured. With pooled-jms, this happens if the pool wraps another instance, or the bean you set up wasn't the one autowired.
+- Credentials were set on the Camel component too, possibly left over from an earlier attempt, and overrode the factory's.
+- The setters were called on the wrong object. For example, they were set on the pool wrapper rather than the `MQConnectionFactory` itself.
+
+If you still have that code, show it and I'll find out which. Either way, **keeping the credentials on the Camel component is a good choice**: the factory stays pure connection config, and the secret stays in config, where it can come from an env var or a vault. The producer then has nothing to read secrets from.
+
+The `MQRC_NOT_AUTHORIZED` (2035) reason code is what you get from the queue manager when the credentials don't reach it. With the dev image, `app` has to authenticate on `DEV.APP.SVRCONN`.
+
+### Notes
+
+- **JVM mode only:** the IBM MQ client isn't prepared for native image.
+- **No Dev Service:** Quarkus won't start MQ for you the way it does for Artemis. Start `broker/` with `docker compose up -d` before `quarkus:dev` or tests.
+- **Package:** put the producer in its own package (e.g. `xyz.kajih.mq`), not in `xyz.kajih.jexapi`, which is the generator's.
+
+---
+
+## How do I keep local secrets (passwords, credentials) out of git? Do I need a `.env` plugin or Vault?
+
+**You don't need a plugin: Quarkus reads `.env` itself.** SmallRye Config (Quarkus's config system, the counterpart of Spring's `Environment`) includes a `.env` config source. A `.env` file in the working directory is read as if its entries were environment variables, and in dev mode (`quarkus:dev` / `quarkusDev`) that means the **project root**. A Gradle `.env` plugin only sets env vars for the Gradle JVM. `quarkusDev` launches the app in a separate JVM, which is probably why the plugin had no effect there.
+
+`.env` is already in this repo's `.gitignore` (and `*.env.local`).
+
+### How keys map
+
+Env var names follow the usual rule: uppercase, and every non-alphanumeric character becomes `_`. It's the same as Spring's relaxed binding, but Quarkus resolves the name *from* the property name, so a placeholder or a mapped property both work:
+
+```properties
+# .env (project root, not committed)
+MQ_APP_PASSWORD=passw0rd                 # used by ${MQ_APP_PASSWORD:...} placeholders
+CAMEL_COMPONENT_JMS_PASSWORD=passw0rd    # or override camel.component.jms.password directly
+_DEV_MQ_HOST=localhost                   # profile-specific: %dev.mq.host
+```
+
+With the config from the ConnectionFactory entry above, `password: ${MQ_APP_PASSWORD}` (drop the `:passw0rd` default once `.env` exists) picks it up. A missing value then fails at startup instead of silently using a default, which is what you want for secrets. Commit a `.env.example` with the keys and dummy values so others know what to create.
+
+Precedence, highest first: system properties, then real env vars, then `.env`, then `application.yaml`. CI or a container can set real env vars and override `.env` without touching any file.
+
+**Alternative:** `config/application.yaml` in the working directory overrides the packaged one. It's useful for a whole block of local settings, not only secrets. Gitignore it if you use it.
+
+### Where Vault fits
+
+`quarkus-vault` (Quarkiverse) adds HashiCorp Vault as a **config source**. `${...}` properties are resolved from Vault KV secrets at startup, and it also does dynamic database credentials. It has a **Dev Service**: in dev and test mode it starts a Vault container for you, much like Testcontainers does for Spring. It's the right tool for shared or deployed environments, but overkill for a local dev password for a dev broker.
+
+Other secret backends work the same way, as config sources: Kubernetes Secrets (`quarkus-kubernetes-config`), and AWS Secrets Manager / Azure Key Vault (Quarkiverse). Quarkus can also encrypt values inside the config file (`${enc:...}`, `quarkus config encrypt` in the CLI). That keeps a ciphertext in git, but you still have to manage the key somewhere.
+
+**For this repo:** use `.env` locally, real env vars in CI and containers, and Vault or the platform's secret store when the service is deployed somewhere real. The application code and `application.yaml` stay the same in all three, because only the config source changes. Spring Cloud Vault sets up the same split.

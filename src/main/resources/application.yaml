@@ -4,3 +4,21 @@ quarkus:
       server:
         use: openapitools
         base-package: xyz.kajih.jexapi
+  transaction-manager:
+    enable-recovery: true
+  pooled-jms:
+    transaction: xa
+
+camel:
+  component:
+    jms:
+      username: app
+      password: ${MQ_APP_PASSWORD}
+  debug:
+    jmxConnectorEnabled: false
+
+mq:
+  channel: DEV.APP.SVRCONN
+  host: localhost
+  port: 1414
+  queue-manager: QM1

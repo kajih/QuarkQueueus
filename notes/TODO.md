@@ -59,7 +59,9 @@ Run from the repo root. Quarkus CLI 3.40.1 is installed. Extension names were ch
 - [x] **Optional: connection pooling:** `quarkus ext add quarkus-pooled-jms` (Messaginghub pooled-jms, the counterpart of Spring's `CachingConnectionFactory`/`JmsPoolConnectionFactory`).
 
 - [x] Local IBM MQ broker to connect to: `broker/` (run `docker compose up -d` there). The queue manager is `QM1` on `localhost:1414`, channel `DEV.APP.SVRCONN`, user `app` / `passw0rd`, queues `DEV.QUEUE.1..3`. Details in `broker/README.md`.
-- [ ] After adding: provide an IBM MQ `ConnectionFactory` as a CDI bean (`@Produces @ApplicationScoped`), the counterpart of a Spring `@Bean`, so Camel's `jms:` component can find it. Note that there's no IBM MQ Spring Boot starter-style auto-config in Quarkus. → ask me for a QA entry when you get here.
+- [ ] After adding: provide an IBM MQ `ConnectionFactory` as a CDI bean (`@Produces @ApplicationScoped`), the counterpart of a Spring `@Bean`, so Camel's `jms:` component can find it. Note that there's no IBM MQ Spring Boot starter-style auto-config in Quarkus. → [QA: IBM MQ ConnectionFactory](QA.md#how-do-i-provide-the-ibm-mq-connectionfactory-for-camel-jms-with-pooling-and-credentials)
+
+- [ ] **Local secrets via `.env`** (already gitignored): put `MQ_APP_PASSWORD=...` in a root `.env`, commit a `.env.example` with dummy values, and use `${MQ_APP_PASSWORD}` without a default in `application.yaml`. No Vault/Consul. → [QA: local secrets](QA.md#how-do-i-keep-local-secrets-passwords-credentials-out-of-git-do-i-need-a-env-plugin-or-vault)
 
 ## Spec cleanup
 
