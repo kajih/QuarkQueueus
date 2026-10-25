@@ -1,28 +1,23 @@
 # TODO
 
-Open work, roughly in priority order within each section. Last full rescan: **2026-10-24** (evening), with everything up to that point committed.
+Open work, roughly in priority order within each section. Last full rescan: **2026-10-25**, with everything up to that point committed; `./mvnw verify` fails only on `JobApiPactIT`.
 Finished items are in [DONE.md](DONE.md), and background explanations in [QnA.md](QnA.md).
 
 ## 1. Messaging (current focus)
 
-Code review findings for the new `jobs` package → [QnA: code review](QnA.md#code-review-2026-10-24-code-standard-bad-code-package-structure)
+Background: [QnA: code and structure reviews](QnA.md#code-and-structure-reviews-2026-10-24), [QnA: the JobRequest message](QnA.md#the-job-request-message-jobrequest-bean-binding-and-headers).
 
-Package layout follow-ups → [QnA: structure round 2](QnA.md#package-structure-review-round-2-2026-10-24)
+- [ ] **Add the `jobs` domain centre** (`Job` + `JobService` with an in-memory store). Nothing calls `JobSender` yet: `JobsResourceImpl.createJob` still returns `null`. `JobService.submit` creates the `Job`, maps to `JobRequest` (`new JobRequest(id, body.getType().value(), body.getParameters())`) and calls `JobSender.send`, so the REST adapter doesn't call the messaging adapter directly.
+- [ ] `SeedJobSender`: last place with the hard-coded `"jms:queue:DEV.JOBS.REQUEST"` (use `JobRequest.QUEUE`). Its hand-written JSON has no `jobId` (the route accepts it, with `jobId` `null`), and it uses a fully qualified `java.util.UUID`. Build a `JobRequest` and serialise it, or call `JobService.submit` once it exists.
+- [ ] `JobWorker`: `boom` scaffolding (`type.contains("boom")` also NPEs if a message has no `type`); logs the whole header map and the request at INFO on every message (DEBUG, or log only `jobId`/`JMSXDeliveryCount`); the comment `// Camel converts the TextMessage body to String` is now wrong. `@Handler` is in, so the route's `"handle"` argument is redundant (`.bean(JobWorker.class)` is enough). → [QnA: bean annotations](QnA.md#the-job-request-message-jobrequest-bean-binding-and-headers)
 
-- [ ] **`JobRequestRoute` has an unused `@Inject JobWorker worker` field** next to `.bean(JobWorker.class, "handle")`. Pick one: `.bean(worker, "handle")`, or drop the field. → [QnA: round 3](QnA.md#package-structure-review-round-3-2026-10-24)
-- [ ] `SeedJobSender`: unused `ConfigProperty` import, left over from the removed flag.
-- [ ] **Queue message record owned by `execution`** (`JobRequest`, plus the queue URI). Stop sending the REST DTO `CreateJobRequest`, and have `JobWorker.handle` take the record. → [QnA: structure round 2](QnA.md#package-structure-review-round-2-2026-10-24)
-- [ ] **Add the `jobs` domain centre** (`Job` + `JobService` with an in-memory store), so the REST adapter doesn't call the messaging adapter directly.
-- [ ] **`JobSender` has no scope annotation**, so it isn't a CDI bean. Add `@ApplicationScoped`, drop the `/* ... */` placeholder, and split "create job" (`JobService`) from "send" (sender).
-- [ ] Queue URI hard-coded in 3 classes (`JobSender`, `JobRequestRoute`, `SeedJobSender`): one constant or config key, owned by `execution`.
-- [ ] `SeedJobSender`: hand-written JSON and a fully qualified `java.util.UUID`. Build the `JobRequest` record, or call `JobService.submit` once it exists.
-- [ ] `JobWorker`: body logged twice at INFO; `boom` scaffolding; take the `JobRequest` record instead of `String`.
+Note: `transacted: true` is set on the component, which is enough for rollback. **Don't** add `.transacted()`: it fails at startup on this classpath (earlier advice corrected). → [QnA: Camel JMS listener and sending](QnA.md#how-do-i-write-a-camel-jms-listener-and-how-do-i-send-messages-to-the-queue)
 
- `transacted: true` is set on the component, which is enough for rollback. **Don't** add `.transacted()`: it fails at startup on this classpath (earlier advice corrected). → [QnA: Camel JMS listener and sending](QnA.md#how-do-i-write-a-camel-jms-listener-and-how-do-i-send-messages-to-the-queue)
-- [ ] **Citrus test for that route.** `citrus-quarkus` + `citrus-jms` (both test scope) are enough: `citrus-quarkus` plugs into `@QuarkusTest` as a Quarkus test resource, and JUnit comes from `quarkus-junit` (checked in the 5.1.0 jar), so **no `citrus-junit-jupiter`** is needed. Import `org.citrusframework.quarkus.CitrusSupport`, not the same-named JUnit one. The broker must be running, since there's no Dev Service for MQ.
+- [ ] **Citrus test for that route** (`JobRequestRouteIT`): start with the poison → `DEV.JOBS.BACKOUT` test. Two snags: Citrus needs credentials wrapped around the app's `ConnectionFactory`, and the route must be stopped while asserting what was sent. Add `citrus-validation-json` before you compare JSON bodies. → [QnA: Citrus](QnA.md#how-do-i-test-the-jms-flow-with-citrus)
 
 ## 2. Config and `pom.xml` hygiene
 
+- [ ] **Native leftover:** `pom.xml`: delete `<native.image.path>` from the failsafe `<systemPropertyVariables>`. Keep `--enable-native-access` (it's a JDK flag, not GraalVM). → [QnA: native](QnA.md#how-do-i-remove-native-graalvm-support)
 - [ ] **Misplaced comment, take 2:** `<!-- keep in step with citrus-quarkus -->` moved off `com.ibm.mq.jakarta.client`, but now sits on `rest-assured`'s `<scope>test</scope>`, which is also unrelated to Citrus (rest-assured's version comes from the Quarkus BOM). It belongs on `citrus-jms`'s `<version>`, or drop it once `citrus-bom` is imported.
 - [ ] **Import `citrus-bom`** so all `citrus-*` modules share one version (verified on Maven Central: 5.1.0 exists and manages `citrus-quarkus`, `citrus-jms`, `citrus-junit-jupiter`, …). Add to `<dependencyManagement>`, then drop the `<version>` from each `citrus-*` dependency:
   ```xml
@@ -55,7 +50,8 @@ Package layout follow-ups → [QnA: structure round 2](QnA.md#package-structure-
 
 ## 5. Structure and tooling
 
-- [ ] Add a formatter (Spotless + palantir/google-java-format) to the build; fix mixed CRLF/LF line endings (`.gitattributes`).
+- [ ] Add a formatter (Spotless + palantir/google-java-format) to the build. → [QnA: reviews](QnA.md#code-and-structure-reviews-2026-10-24)
+- [ ] *(low)* The IDE writes CRLF (Git warns `CRLF will be replaced by LF`). Harmless, because `.gitattributes` already has `* text=auto eol=lf` and Git normalises on commit, but setting the IDE to LF silences the warnings. Several files also lack a final newline.
 
 ## 6. Scaffold leftovers
 
@@ -68,3 +64,5 @@ Package layout follow-ups → [QnA: structure round 2](QnA.md#package-structure-
 So nobody chases them again:
 
 - **`OpenAPI 3.1 support is still in beta`** from the generator: see section 4.
+- **`The Maven extensions for the Quarkus Maven plugin are not enabled`** when running the bare `quarkus:build` goal: misleading, and `<extensions>true</extensions>` is set. Use `./mvnw package`. → [QnA](QnA.md#why-does-quarkusbuild-warn-that-extensionstrueextensions-is-missing)
+- **Connection-failure warnings from the JMS listener** in every `@QuarkusTest` when `broker/` is down: the route retries in the background. → [QnA: listener](QnA.md#how-do-i-write-a-camel-jms-listener-and-how-do-i-send-messages-to-the-queue)

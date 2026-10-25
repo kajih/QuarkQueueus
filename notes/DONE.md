@@ -2,6 +2,27 @@
 
 Finished TODO items, newest first, kept for reference. Open work is in [TODO.md](TODO.md).
 
+## 2026-10-25
+
+- `JobSender` is `@ApplicationScoped`, so it's a CDI bean now. → [QnA](QnA.md#code-and-structure-reviews-2026-10-24)
+
+**Notes cleanup** (by Claude): `QnA.md` regrouped by topic; the three review rounds merged into [one entry](QnA.md#code-and-structure-reviews-2026-10-24) and the three `JobRequest` entries into [another](QnA.md#the-job-request-message-jobrequest-bean-binding-and-headers); outdated snippets replaced with references to the current code. Verified again: `./mvnw verify` (scratch copy) fails only on `JobApiPactIT`.
+
+**Queue message record, consumer side**
+- `JobWorker.handle(@Body JobRequest, @Headers Map<String, Object>)` with `@Handler`.
+- `camel-quarkus-jackson` added; the route does `.unmarshal().json(JobRequest.class)` before `.bean(JobWorker.class, "handle")`, and `JobWorker.handle(JobRequest, @Headers Map<String, Object>)` takes the record. → [QnA](QnA.md#the-job-request-message-jobrequest-bean-binding-and-headers)
+
+**Queue message record, producer side** (verified with `./mvnw verify` in a scratch copy: only `JobApiPactIT` fails, as before)
+- `execution/JobRequest` is now a standalone `record JobRequest(UUID jobId, String type, Map<String, String> parameters)` with `QUEUE`, instead of `extends CreateJobRequest`. `execution` no longer imports generated code. → [QnA](QnA.md#the-job-request-message-jobrequest-bean-binding-and-headers)
+- `JobSender.send(JobRequest)` replaces `createJob(CreateJobRequest)`: it no longer builds the REST `Job` (the `/* ... */` placeholder is gone) and doesn't import `xyz.kajih.jexapi.model`.
+- `JobSender` and `JobRequestRoute` use `JobRequest.QUEUE`; only `SeedJobSender` still hard-codes the URI.
+- The route log line shows `JobId` and delivery count instead of the full body, so the body is no longer logged twice.
+
+- `JobRequestRoute`: unused `@Inject JobWorker worker` field removed; the route keeps `.bean(JobWorker.class, "handle")`.
+- `SeedJobSender`: unused `ConfigProperty` import removed.
+- `.dockerignore` deleted. → [QnA](QnA.md#how-do-i-remove-native-graalvm-support)
+- Native: `README.md` section on native executables replaced by "JVM mode only", and `CLAUDE.md` updated (by Claude). → [QnA](QnA.md#how-do-i-remove-native-graalvm-support)
+
 ## 2026-10-24
 
 **End-to-end run against `broker/`** (by Claude, 2026-10-24, `quarkus:dev` + `amqsputc`)
@@ -12,13 +33,13 @@ Finished TODO items, newest first, kept for reference. Open work is in [TODO.md]
 - `DEV.JOBS.BACKOUT` now holds the `boom` message. Clear it with `CLEAR QLOCAL(DEV.JOBS.BACKOUT)` in `runmqsc` when you no longer need it.
 
 **App starts again** (uncommitted). Verified with `./mvnw clean verify`, both in a scratch copy and on the real tree: `GreetingResourceTest` passes, and the only failure is `JobApiPactIT` "has a matching body" (known, TODO §3).
-- Added `camel-quarkus-bean`, so `.bean(...)` in `JobRequestRoute` resolves. → [QnA](QnA.md#package-structure-review-round-3-2026-10-24)
+- Added `camel-quarkus-bean`, so `.bean(...)` in `JobRequestRoute` resolves. → [QnA](QnA.md#code-and-structure-reviews-2026-10-24)
 - `GreetingResource` is `@IfBuildProfile(anyOf = {"dev", "test"})`; `GreetingResourceIT` deleted, because the prod jar has no `/hello`.
 - `pom.xml`: `native.image.path` rejoined onto one line; misplaced comment removed from `com.ibm.mq.jakarta.client`.
 
 **Package restructure** (uncommitted)
 - Root package `xyz.kajih.quarqueueus`, with `dev/`, `execution/`, `infra/mq/` and `jobs/internal/{rest,messaging}`. `JexSrv` → `jobs.internal.rest.JobsResourceImpl`; `JobApiPactIT` → test `jobs` package. `JobWorker` is now staged along with the rest. The generator `base-package` stays `xyz.kajih.jexapi`.
-- Round 2: `JobRequestRoute` moved to `execution/messaging`; `internal/` dropped (`jobs/rest`, `jobs/messaging`); `SeedJobSender` is `@IfBuildProfile("dev")`, and the `jobs.seed.enabled` flag is gone. → [QnA](QnA.md#package-structure-review-round-2-2026-10-24) → [QnA: code review](QnA.md#code-review-2026-10-24-code-standard-bad-code-package-structure)
+- Round 2: `JobRequestRoute` moved to `execution/messaging`; `internal/` dropped (`jobs/rest`, `jobs/messaging`); `SeedJobSender` is `@IfBuildProfile("dev")`, and the `jobs.seed.enabled` flag is gone. → [QnA](QnA.md#code-and-structure-reviews-2026-10-24) → [QnA: code review](QnA.md#code-and-structure-reviews-2026-10-24)
 
 **Broker queues** (by Claude, in `broker/`)
 - `broker/mqsc/30-quarqueueus.mqsc` is mounted into `/etc/mqm/` and re-applied on every start. It defines `DEV.JOBS.REQUEST` (`BOTHRESH(3)` → `DEV.JOBS.BACKOUT`, `DEFPSIST(YES)`) and `DEV.JOBS.BACKOUT`. Verified: the script runs with 0 errors, and `app` can put and get. How-to: [broker/README.md → Creating queues](../broker/README.md#creating-queues).

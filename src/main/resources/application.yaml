@@ -4,7 +4,6 @@ quarkus:
       server:
         use: openapitools
         base-package: xyz.kajih.jexapi
-
 camel:
   component:
     jms:

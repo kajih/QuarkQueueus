@@ -13,7 +13,7 @@ This is an experimental repo the owner uses to learn Quarkus. The owner is an ex
 - `notes/TODO.md` — **open items only**, grouped by area, current focus first. Add items you discover and link to the relevant QnA entry. When the owner has fixed something (check the code first), move it to `notes/DONE.md` rather than ticking it in place. Update the "Last full rescan" line when you rescan.
 - `notes/DONE.md` — finished items, newest date first, with commit hashes where known.
 - `broker/` — **exception: Claude owns this folder and may edit it freely.** It holds the Docker Compose setup for a local IBM MQ developer queue manager (`QM1` on `localhost:1414`); see `broker/README.md` for connection details. Project queues are defined in `broker/mqsc/30-quarqueueus.mqsc`, which is re-applied on every start and resets unlisted attributes. Change queues there, never in the console. It's infrastructure, not part of the app.
-- `notes/QnA.md` — answers to the owner's questions, appended as `##` sections (newest at the bottom). Explain the why and give the concrete fix steps/snippets, but don't apply them. Keep the status index at the top in sync (🔴 open / ✅ applied). `TODO.md`, `DONE.md` and the index link to entries by heading anchor, so renaming a QnA heading breaks links.
+- `notes/QnA.md` — answers to the owner's questions, as `##` entries grouped under `#` topic headings (REST API, Build, Config, IBM MQ, Camel, Testing, Structure). Add a new entry at the end of its topic, and keep entries in line with the current code: when code changes make an entry stale, update it rather than appending corrections. Explain the why and give the concrete fix steps/snippets, but don't apply them. Keep the status index at the top in sync (🔴 open / ✅ applied). `TODO.md`, `DONE.md` and the index link to entries by heading anchor, so renaming a QnA heading breaks links.
 
 ## Commands
 
@@ -24,7 +24,8 @@ Use `./mvnw` (or `mvnw.cmd` on Windows).
 - Single test: `./mvnw test -Dtest=GreetingResourceTest#testHelloEndpoint`
 - Unit + integration tests (failsafe, `*IT`): `./mvnw verify`
 - Single IT: `./mvnw verify -Dit.test=JobApiPactIT -Dtest=skip -Dsurefire.failIfNoSpecifiedTests=false`
-- Package: `./mvnw package` → `target/quarkus-app/quarkus-run.jar`; native: `./mvnw package -Dnative`
+- Build with the `package` phase, never the bare `quarkus:build` goal: that skips compile (so it packages stale classes) and prints a misleading "extensions not enabled" warning (`notes/QnA.md`).
+- Package: `./mvnw package` → `target/quarkus-app/quarkus-run.jar`. JVM mode only: native (GraalVM) builds are out of scope by the owner's choice, so don't suggest `-Dnative`.
 
 No linter/formatter is configured.
 
@@ -38,11 +39,11 @@ To change the API, edit the YAML and rebuild — never edit generated sources. `
 
 **Package layout** (by feature, under `xyz.kajih.quarqueueus`; the owner enforces the structure, no tooling does):
 - `jobs/` — job lifecycle and REST API: `rest/JobsResourceImpl`, `messaging/JobSender` (sends to the request queue)
-- `execution/` — runs jobs: `JobWorker`, plus `messaging/JobRequestRoute` (Camel consumer of `DEV.JOBS.REQUEST`)
+- `execution/` — runs jobs: `JobRequest` (record on the request queue, plus its `QUEUE` URI; execution's inbound contract, so `jobs` depends on it and `execution` depends on neither `jobs` nor generated code), `JobWorker`, and `messaging/JobRequestRoute` (Camel consumer of `DEV.JOBS.REQUEST`)
 - `infra/mq/` — IBM MQ `ConnectionFactory` setup, no domain code
 - `dev/` — build-profile-gated helpers: `SeedJobSender` (`@IfBuildProfile("dev")`, sends one job on Camel start), `GreetingResource` (`/hello`, `@IfBuildProfile(anyOf = {"dev", "test"})`, leftover scaffold covered by `GreetingResourceTest`). `@IfBuildProfile` removes the bean at build time, so neither is in the prod jar, and a `@QuarkusIntegrationTest` (prod profile) can't see them.
 
-The planned direction (a message record owned by `execution`, a `jobs` domain core) is in `notes/TODO.md` §1 and the structure reviews in `notes/QnA.md`. After moving packages, run `./mvnw clean`: stale classes in `target/` break test discovery.
+The planned direction (the route and worker taking `JobRequest` instead of a `String`, a `jobs` domain core) is in `notes/TODO.md` §1 and the structure reviews in `notes/QnA.md`. After moving packages, run `./mvnw clean`: stale classes in `target/` break test discovery.
 
 **Pact provider verification.** `JobApiPactIT` verifies the service as provider `JexApi` against pact files loaded from the test classpath via `@PactFolder("pacts")` (i.e. `src/test/resources/pacts/`, consumer `quarqueueus_client`). Pacts are matched on the provider name, so a mismatch between `@Provider` and the pact's `provider.name` means no pacts are found. Although it uses `@QuarkusTest`, its `*IT` suffix means it only runs under failsafe (`./mvnw verify`), not `./mvnw test`.
 
