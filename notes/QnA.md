@@ -21,6 +21,7 @@ Cleaned up on 2026-10-25: entries were regrouped, the three code-review rounds w
 | ✅ applied | Camel | [The job request message: `JobRequest`, bean binding and headers](#the-job-request-message-jobrequest-bean-binding-and-headers) (+ which annotations to use) |
 | 🔴 open | Camel | [How do I run a one-time action at startup (send one job)?](#how-do-i-run-a-one-time-action-at-startup-eg-send-one-job) (`SeedJobSender` leftovers) |
 | 🔴 open | Testing | [How do I test the JMS flow with Citrus?](#how-do-i-test-the-jms-flow-with-citrus) |
+| 🔴 open | Testing | [Doesn't Citrus decouple the test from the MQ broker?](#doesnt-citrus-decouple-the-test-from-the-mq-broker) (no; options for broker-free tests) |
 | 🔴 open | Structure | [Code and structure reviews (2026-10-24)](#code-and-structure-reviews-2026-10-24) (decisions made, plus what's still open) |
 
 🔴 open means part of the entry still isn't in the code. ✅ applied means the fix is in, and the entry is kept as background reading. New entries go at the end of their topic, and the index stays in topic order.
@@ -598,6 +599,7 @@ class JobRequestRouteIT {
     }
 ```
 
+- **Citrus doesn't go through `JobSender`; both are separate clients of the same real broker.** `sender.send(...)` runs the app's own code (`ProducerTemplate` → Camel JMS component → the pooled MQ factory from `infra.mq`, configured by `mq.*`), exactly as in `quarkus:dev`. `application.yaml` has no `%test` overrides, so the test app connects to `localhost:1414` as well. Citrus then reads the queue through its own endpoint on the same factory, with credentials wrapped around it. There's no Dev Service, embedded broker or mock, so `broker/` must be running. Otherwise the send fails with a connection error, or the receive times out.
 - The selector makes the test ignore leftovers on the queue, such as the dev seed job.
 - With `citrus-validation-json` you can write `"jobId":"@ignore@"`, or `@matches('[0-9a-f-]{36}')@`, and stop caring about field order.
 - Arguably this belongs in a `jobs` test package. Start with one class, and split when a shared base class or `ApplicationPropertiesSupplier` pays off.
@@ -606,7 +608,7 @@ class JobRequestRouteIT {
 
 A valid message currently ends with log lines, which Citrus can't observe. There are two options:
 
-- **Now: mock the worker.** Add `io.quarkus:quarkus-junit-mockito` (test scope, version from the Quarkus BOM), put `@InjectMock JobWorker worker;` in the test, send with Citrus, and check `verify(worker, timeout(5_000)).handle(any(), any())`. `@InjectMock` swaps the CDI bean behind its client proxy, and the probe showed that `.bean(JobWorker.class, …)` calls the CDI bean, so this should work. The mock itself hasn't been tested.
+- **Now: mock the worker.** Add `io.quarkus:quarkus-junit-mockito` (test scope, version from the Quarkus BOM), put `@InjectMock JobWorker worker;` in the test, send with Citrus, and check `verify(worker, timeout(5_000)).handle(any(), any())`. `@InjectMock` swaps the CDI bean behind its client proxy, and `.bean(JobWorker.class, …)` calls that proxy. Verified with `direct:` in the [broker-free recipe](#no-broker-at-all-the-verified-recipe).
 - **Later: assert on an outcome.** Once the worker reports status (job store via `JobService`, or a status/reply queue), the Citrus test can `receive` the status message, or poll `GET /jobs/{id}`. That's the real end-to-end test, and the reason Citrus is worth having over plain mocks.
 
 ### Running
@@ -614,6 +616,107 @@ A valid message currently ends with log lines, which Citrus can't observe. There
 - Name the classes `*IT` so that they only run under `./mvnw verify` (failsafe), like `JobApiPactIT`.
 - The broker must be running (`broker/`, `docker compose up -d`), and `.env` must exist.
 - Single class: `./mvnw verify -Dit.test=JobRequestRouteIT -Dtest=skip -Dsurefire.failIfNoSpecifiedTests=false`.
+
+## Doesn't Citrus decouple the test from the MQ broker?
+
+**No.** Citrus decouples the test from the **app's internals**, not from the infrastructure. It plays the *other systems*: the partner that puts a message on the queue, or the one that reads your output. It does that over a real transport, so it needs a broker just as the app does. Think of it as a scriptable external client with validation, closer to WireMock's role for HTTP than to an embedded broker. The value is black-box tests against real wire behaviour (JMS properties, transactions, backout), which mocks can't give you.
+
+So "no broker" and "Citrus" pull in different directions. Pick the goal first:
+
+| Goal | How | What you lose |
+|---|---|---|
+| **No manually started broker** (still real IBM MQ) | Start the MQ image per test run with Testcontainers, via a `QuarkusTestResourceLifecycleManager` that runs `icr.io/ibm-messaging/mq`, mounts `broker/mqsc/30-quarqueueus.mqsc` and returns `mq.host`/`mq.port` overrides. That's the Quarkus counterpart of Spring's `@ServiceConnection`/`@DynamicPropertySource`. `citrus-testcontainers` 5.1.0 (on Central) has a Quarkus `GenericContainerResource`, but there's no IBM MQ module, so a plain Testcontainers resource is simpler. | Needs Docker during `verify`; slower start (the MQ image takes ~10-20 s). |
+| **A lighter broker** | In the `test` profile, produce an Artemis `ConnectionFactory` instead of the MQ one (an embedded in-VM Artemis, or the `quarkus-artemis-jms` Dev Service). Camel JMS and Citrus don't care which broker it is. | IBM MQ behaviour: `BOTHRESH`/backout queue, `PASSALL`, `MQRC` errors. Test 1 doesn't carry over (Artemis uses `max-delivery-attempts` and a dead-letter address). |
+| **No broker at all** | Make the route URI configurable (`from("{{jobs.request.uri}}")` instead of the `QUEUE` constant) and use `seda:`/`direct:` in tests, or replace the endpoint with Camel's `AdviceWith`. Then a plain `@QuarkusTest` with `@InjectMock` is enough. | Transactions and everything JMS. Citrus adds little here, since you're testing Camel wiring, not messaging. |
+
+**Recommendation:** use both. Run the routing and serialisation tests broker-free (below), as plain `*Test` classes under `./mvnw test`. Keep one or two Citrus `*IT`s against real MQ (Testcontainers) for what only the broker can show: transactions, backout, credentials.
+
+### No broker at all: the verified recipe
+
+Verified on 2026-10-25 in a scratch copy, with no `.env` and `mq.host` set to an unreachable host in the test profile. `GreetingResourceTest` and the three tests below pass under `./mvnw test`, with no JMS connection warnings.
+
+**1. The queue constant becomes a placeholder.** The class keeps the constant, so execution still owns the contract, but the actual URI now comes from config:
+
+```java
+public record JobRequest(UUID jobId, String type, Map<String, String> parameters) {
+
+    public static final String QUEUE = "{{jobs.request.uri}}";
+}
+```
+
+`from(JobRequest.QUEUE)` and `producer.sendBodyAndHeader(JobRequest.QUEUE, …)` stay unchanged: Camel resolves `{{…}}` in both route and `ProducerTemplate` URIs, through Quarkus config, profiles included. Fix `SeedJobSender`'s hard-coded URI at the same time.
+
+**2. `application.yaml`:**
+
+```yaml
+jobs:
+  request:
+    uri: jms:queue:DEV.JOBS.REQUEST
+
+"%test":
+  jobs:
+    request:
+      uri: direct:job-request
+  camel:
+    component:
+      jms:
+        password: "{{unused:unused}}"   # JMS isn't used in tests, but Camel resolves the placeholder at startup
+```
+
+- The password override is needed. Without it, startup fails with `Property with key [mq.app.password] not found`, because Camel configures the JMS component's properties at boot even if no route uses `jms:`. The obvious `%test.mq.app.password` fails differently: `MqConfig` is a `@ConfigMapping(prefix = "mq")`, and an unknown `mq.*` key in YAML fails validation (`SRCFG00050 … does not map to any root`). The `.env` value got through only because environment variables aren't checked that way. A plain `password: unused` works too, but brings Camel's plain-text secret warning back. The placeholder-with-default form avoids it.
+- `.env` is no longer needed for `./mvnw test`.
+- The Spring counterpart is a test `application.properties` / `@TestPropertySource` that swaps a destination name.
+
+**3. `pom.xml` (test scope):** `camel-quarkus-direct` for the `direct:` component, and `quarkus-junit-mockito` for `@InjectMock`. Versions come from the BOMs. Test scope works for both.
+
+**4. The test:**
+
+```java
+@QuarkusTest
+class JobFlowTest {
+
+    @Inject
+    JobSender sender;
+
+    @Inject
+    ProducerTemplate producer;
+
+    @InjectMock
+    JobWorker worker;
+
+    @Test
+    void senderToWorkerInProcess() {
+        var request = new JobRequest(UUID.randomUUID(), "report-generation", Map.of("year", "2026"));
+        sender.send(request);   // direct: runs the route on this thread, so no timeout needed
+        verify(worker).handle(eq(request),
+                argThat(h -> request.jobId().toString().equals(h.get("JobId"))));
+    }
+
+    @Test
+    void invalidJsonFailsBeforeWorker() {
+        assertThrows(CamelExecutionException.class,   // cause: JsonParseException
+                () -> producer.sendBodyAndHeader(JobRequest.QUEUE, "boom", "JobId", "x"));
+        verifyNoInteractions(worker);
+    }
+
+    @Test
+    void workerExceptionReachesSender() {
+        doThrow(new IllegalStateException("poison")).when(worker).handle(any(), anyMap());
+        assertThrows(CamelExecutionException.class,
+                () -> sender.send(new JobRequest(UUID.randomUUID(), "x", Map.of())));
+    }
+}
+```
+
+The first test covers the whole in-process chain: `JobSender`'s JSON, the `JobId` header, the route's `unmarshal`, and the bean binding into `JobWorker`. It also confirms that `@InjectMock` on `JobWorker` works with `.bean(JobWorker.class, …)`. The route calls the CDI client proxy, and the mock sits behind it.
+
+**What `direct:` changes, and what you lose:**
+
+- `direct:` is a synchronous method call: the sender's thread runs the route, so exceptions reach the sender (tests 2 and 3). On the real queue, the sender never sees consumer failures. Don't let a test rely on that coupling as if it were behaviour. Use `seda:` (in-memory, asynchronous, needs `camel-quarkus-seda`) if you want queue-like decoupling, at the price of `verify(worker, timeout(…))` and losing the exceptions.
+- No transactions, no redelivery, no backout. Test 2 shows that bad JSON *fails*. That it ends up on `DEV.JOBS.BACKOUT` stays a broker test (Citrus Test 1).
+- Nothing checks the JMS config (`transacted`, credentials, the MQ factory). A typo in `jobs.request.uri`'s prod value only shows up against a broker.
+
+**Alternative without touching `JobRequest`:** Camel's `AdviceWith` (`camel-quarkus-junit`, `CamelQuarkusTestSupport`, `replaceFromWith("direct:…")`) rewrites the route in the test. It's more machinery and has Quarkus-specific lifecycle caveats, and the producer side would still point at `jms:`. The config-driven URI is simpler.
 
 ---
 

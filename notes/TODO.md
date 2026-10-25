@@ -14,6 +14,8 @@ Background: [QnA: code and structure reviews](QnA.md#code-and-structure-reviews-
 Note: `transacted: true` is set on the component, which is enough for rollback. **Don't** add `.transacted()`: it fails at startup on this classpath (earlier advice corrected). → [QnA: Camel JMS listener and sending](QnA.md#how-do-i-write-a-camel-jms-listener-and-how-do-i-send-messages-to-the-queue)
 
 - [ ] **Citrus test for that route** (`JobRequestRouteIT`): start with the poison → `DEV.JOBS.BACKOUT` test. Two snags: Citrus needs credentials wrapped around the app's `ConnectionFactory`, and the route must be stopped while asserting what was sent. Add `citrus-validation-json` before you compare JSON bodies. → [QnA: Citrus](QnA.md#how-do-i-test-the-jms-flow-with-citrus)
+- [ ] **Broker-free flow test** (`JobFlowTest`, runs under `./mvnw test`): `JobRequest.QUEUE = "{{jobs.request.uri}}"`, a `%test` `direct:` URI plus the dummy JMS password, `camel-quarkus-direct` and `quarkus-junit-mockito` in test scope. Verified recipe → [QnA: no broker at all](QnA.md#no-broker-at-all-the-verified-recipe)
+- [ ] **Decide how the remaining broker tests get a broker.** Citrus still needs one. Recommended: a Testcontainers test resource running the IBM MQ image, so `verify` doesn't depend on a manually started `broker/`. → [QnA: Citrus and the broker](QnA.md#doesnt-citrus-decouple-the-test-from-the-mq-broker)
 
 ## 2. Config and `pom.xml` hygiene
 
